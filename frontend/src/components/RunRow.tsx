@@ -43,19 +43,27 @@ export default function RunRow({ run, owner, repo }: RunRowProps) {
                   <div className="flex items-center gap-2 mb-1">
                     <StatusBadge status={job.status} conclusion={job.conclusion} />
                     <span className="text-sm text-white">{job.name}</span>
+                    {job.runner_name && (
+                      <span className="text-xs text-gray-500 ml-auto">{'\uD83D\uDDA5'} {job.runner_name}</span>
+                    )}
                   </div>
                   {job.steps && job.steps.length > 0 && (
                     <div className="ml-6 space-y-0.5">
-                      {job.steps.map((step) => (
-                        <div key={step.number} className="flex items-center gap-2 text-xs text-gray-400">
-                          <span>
-                            {step.conclusion === 'success' ? '\u2713' :
-                              step.conclusion === 'failure' ? '\u2717' :
-                              step.status === 'in_progress' ? '\u25CF' : '\u2022'}
-                          </span>
-                          <span>{step.name}</span>
-                        </div>
-                      ))}
+                      {job.steps.map((step) => {
+                        const icon = step.conclusion === 'success' ? '\u2705' :
+                          step.conclusion === 'failure' ? '\u274C' :
+                          step.status === 'in_progress' ? '\uD83D\uDD04' :
+                          step.status === 'queued' ? '\u23F3' : '\u2022'
+                        const textClass = step.status === 'in_progress'
+                          ? 'text-amber-400 animate-pulse'
+                          : 'text-gray-400'
+                        return (
+                          <div key={step.number} className={`flex items-center gap-2 text-xs ${textClass}`}>
+                            <span>{icon}</span>
+                            <span>{step.name}</span>
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                 </div>

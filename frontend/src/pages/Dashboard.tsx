@@ -1,5 +1,6 @@
 import { useDashboard } from '../hooks/useApi'
 import RepoSection from '../components/RepoSection'
+import ActiveBuilds from '../components/ActiveBuilds'
 
 export default function Dashboard() {
   const { data, isLoading, error } = useDashboard()
@@ -18,6 +19,7 @@ export default function Dashboard() {
 
   return (
     <div>
+      <ActiveBuilds repos={data} />
       {data.map((rw) => (
         <RepoSection key={`${rw.owner}/${rw.repo}`} repoWorkflows={rw} />
       ))}

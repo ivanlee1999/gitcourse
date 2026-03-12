@@ -40,6 +40,16 @@ export default function PipelineCard({ workflow, owner, repo }: PipelineCardProp
             <span>&middot;</span>
             <span>{run.event}</span>
           </div>
+          {run.status === 'in_progress' && (run.runner_name || run.current_step) && (
+            <div className="space-y-0.5">
+              {run.runner_name && (
+                <div className="text-xs text-amber-400/80 truncate">{'\uD83D\uDDA5'} {run.runner_name}</div>
+              )}
+              {run.current_step && (
+                <div className="text-xs text-amber-300/70 truncate">{'\u2699'} {run.current_step}</div>
+              )}
+            </div>
+          )}
           <div className="text-xs text-gray-500">{relativeTime(run.created_at)}</div>
         </div>
       ) : (

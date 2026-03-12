@@ -66,15 +66,17 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 // Dashboard types
 
 type DashboardWorkflowRun struct {
-	ID         int64  `json:"id"`
-	Status     string `json:"status"`
-	Conclusion string `json:"conclusion"`
-	CreatedAt  string `json:"created_at"`
-	UpdatedAt  string `json:"updated_at"`
-	HeadBranch string `json:"head_branch"`
-	Event      string `json:"event"`
-	Actor      string `json:"actor"`
-	RunNumber  int    `json:"run_number"`
+	ID          int64  `json:"id"`
+	Status      string `json:"status"`
+	Conclusion  string `json:"conclusion"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	HeadBranch  string `json:"head_branch"`
+	Event       string `json:"event"`
+	Actor       string `json:"actor"`
+	RunNumber   int    `json:"run_number"`
+	RunnerName  string `json:"runner_name,omitempty"`
+	CurrentStep string `json:"current_step,omitempty"`
 }
 
 type DashboardWorkflow struct {
@@ -91,19 +93,30 @@ type DashboardRepo struct {
 }
 
 
-type SlimWorkflowRun struct {
+type SlimJob struct {
 	ID          int64  `json:"id"`
 	Name        string `json:"name"`
 	Status      string `json:"status"`
 	Conclusion  string `json:"conclusion"`
-	CreatedAt   string `json:"created_at"`
-	UpdatedAt   string `json:"updated_at"`
-	HeadBranch  string `json:"head_branch"`
-	HeadSHA     string `json:"head_sha"`
-	Event       string `json:"event"`
-	RunNumber   int    `json:"run_number"`
-	Actor       string `json:"actor"`
-	DisplayTitle string `json:"display_title"`
+	RunnerName  string `json:"runner_name"`
+	StartedAt   string `json:"started_at"`
+	CurrentStep string `json:"current_step"`
+}
+
+type SlimWorkflowRun struct {
+	ID           int64      `json:"id"`
+	Name         string     `json:"name"`
+	Status       string     `json:"status"`
+	Conclusion   string     `json:"conclusion"`
+	CreatedAt    string     `json:"created_at"`
+	UpdatedAt    string     `json:"updated_at"`
+	HeadBranch   string     `json:"head_branch"`
+	HeadSHA      string     `json:"head_sha"`
+	Event        string     `json:"event"`
+	RunNumber    int        `json:"run_number"`
+	Actor        string     `json:"actor"`
+	DisplayTitle string     `json:"display_title"`
+	Jobs         []SlimJob  `json:"jobs,omitempty"`
 }
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
@@ -171,6 +184,30 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							RunNumber:  run.GetRunNumber(),
 						}
 					}
+				}
+			}
+
+			// For in_progress runs, fetch jobs to get runner_name and current_step
+			for wfID, lr := range latestRunMap {
+				if lr.Status == "in_progress" || lr.Status == "queued" {
+					jobs, err := s.githubClient.GetJobsForRun(ctx, owner, repoName, lr.ID)
+					if err != nil {
+						log.Printf("error getting jobs for run %d: %v", lr.ID, err)
+						continue
+					}
+					for _, job := range jobs {
+						if job.GetStatus() == "in_progress" {
+							lr.RunnerName = job.GetRunnerName()
+							for _, step := range job.Steps {
+								if step.GetStatus() == "in_progress" {
+									lr.CurrentStep = step.GetName()
+									break
+								}
+							}
+							break
+						}
+					}
+					latestRunMap[wfID] = lr
 				}
 			}
 
@@ -244,22 +281,50 @@ func (s *Server) handleWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
 	slim := make([]SlimWorkflowRun, 0, len(runs))
-	for _, r := range runs {
-		slim = append(slim, SlimWorkflowRun{
-			ID:           r.GetID(),
-			Name:         r.GetName(),
-			Status:       r.GetStatus(),
-			Conclusion:   r.GetConclusion(),
-			CreatedAt:    r.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
-			UpdatedAt:    r.GetUpdatedAt().Format("2006-01-02T15:04:05Z"),
-			HeadBranch:   r.GetHeadBranch(),
-			HeadSHA:      r.GetHeadSHA(),
-			Event:        r.GetEvent(),
-			RunNumber:    r.GetRunNumber(),
-			Actor:        r.GetActor().GetLogin(),
-			DisplayTitle: r.GetDisplayTitle(),
-		})
+	for _, run := range runs {
+		sr := SlimWorkflowRun{
+			ID:           run.GetID(),
+			Name:         run.GetName(),
+			Status:       run.GetStatus(),
+			Conclusion:   run.GetConclusion(),
+			CreatedAt:    run.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
+			UpdatedAt:    run.GetUpdatedAt().Format("2006-01-02T15:04:05Z"),
+			HeadBranch:   run.GetHeadBranch(),
+			HeadSHA:      run.GetHeadSHA(),
+			Event:        run.GetEvent(),
+			RunNumber:    run.GetRunNumber(),
+			Actor:        run.GetActor().GetLogin(),
+			DisplayTitle: run.GetDisplayTitle(),
+		}
+
+		if run.GetStatus() == "in_progress" || run.GetStatus() == "queued" {
+			jobs, err := s.githubClient.GetJobsForRun(ctx, owner, repo, run.GetID())
+			if err == nil {
+				for _, job := range jobs {
+					currentStep := ""
+					for _, step := range job.Steps {
+						if step.GetStatus() == "in_progress" {
+							currentStep = step.GetName()
+							break
+						}
+					}
+					sr.Jobs = append(sr.Jobs, SlimJob{
+						ID:          job.GetID(),
+						Name:        job.GetName(),
+						Status:      job.GetStatus(),
+						Conclusion:  job.GetConclusion(),
+						RunnerName:  job.GetRunnerName(),
+						StartedAt:   job.GetStartedAt().Format("2006-01-02T15:04:05Z"),
+						CurrentStep: currentStep,
+					})
+				}
+			}
+		}
+
+		slim = append(slim, sr)
 	}
 	writeJSON(w, http.StatusOK, slim)
 }

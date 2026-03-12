@@ -1,3 +1,13 @@
+export interface SlimJob {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string;
+  runner_name: string;
+  started_at: string;
+  current_step: string;
+}
+
 export interface WorkflowRun {
   id: number;
   status: string;
@@ -9,6 +19,9 @@ export interface WorkflowRun {
   actor: string;
   run_number: number;
   html_url: string;
+  runner_name?: string;
+  current_step?: string;
+  jobs?: SlimJob[];
 }
 
 export interface Workflow {
@@ -31,6 +44,7 @@ export interface WorkflowJob {
   conclusion: string | null;
   started_at: string;
   completed_at: string;
+  runner_name?: string;
   steps: JobStep[];
 }
 
