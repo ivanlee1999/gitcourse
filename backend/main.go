@@ -1,0 +1,33 @@
+package main
+
+import (
+	"log"
+	"net/http"
+	"os"
+
+	"github.com/ivanlee1999/gitcourse/backend/api"
+	ghclient "github.com/ivanlee1999/gitcourse/backend/github"
+)
+
+func main() {
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		log.Fatal("GITHUB_TOKEN environment variable is required")
+	}
+
+	org := os.Getenv("GITHUB_ORG")
+	if org == "" {
+		log.Fatal("GITHUB_ORG environment variable is required")
+	}
+
+	client := ghclient.NewClient(token)
+	server := api.NewServer(client, org)
+
+	mux := http.NewServeMux()
+	server.RegisterRoutes(mux)
+
+	log.Printf("Starting server on :8080 for org %s", org)
+	if err := http.ListenAndServe(":8080", mux); err != nil {
+		log.Fatalf("Server failed: %v", err)
+	}
+}
