@@ -88,6 +88,22 @@ type DashboardRepo struct {
 	Workflows []DashboardWorkflow `json:"workflows"`
 }
 
+
+type SlimWorkflowRun struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`
+	Status      string `json:"status"`
+	Conclusion  string `json:"conclusion"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+	HeadBranch  string `json:"head_branch"`
+	HeadSHA     string `json:"head_sha"`
+	Event       string `json:"event"`
+	RunNumber   int    `json:"run_number"`
+	Actor       string `json:"actor"`
+	DisplayTitle string `json:"display_title"`
+}
+
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
@@ -208,7 +224,24 @@ func (s *Server) handleWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, runs)
+	slim := make([]SlimWorkflowRun, 0, len(runs))
+	for _, r := range runs {
+		slim = append(slim, SlimWorkflowRun{
+			ID:           r.GetID(),
+			Name:         r.GetName(),
+			Status:       r.GetStatus(),
+			Conclusion:   r.GetConclusion(),
+			CreatedAt:    r.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
+			UpdatedAt:    r.GetUpdatedAt().Format("2006-01-02T15:04:05Z"),
+			HeadBranch:   r.GetHeadBranch(),
+			HeadSHA:      r.GetHeadSHA(),
+			Event:        r.GetEvent(),
+			RunNumber:    r.GetRunNumber(),
+			Actor:        r.GetActor().GetLogin(),
+			DisplayTitle: r.GetDisplayTitle(),
+		})
+	}
+	writeJSON(w, http.StatusOK, slim)
 }
 
 func (s *Server) handleJobs(w http.ResponseWriter, r *http.Request) {
