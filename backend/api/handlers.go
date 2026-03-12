@@ -68,6 +68,7 @@ type DashboardWorkflowRun struct {
 	Status     string `json:"status"`
 	Conclusion string `json:"conclusion"`
 	CreatedAt  string `json:"created_at"`
+	UpdatedAt  string `json:"updated_at"`
 	HeadBranch string `json:"head_branch"`
 	Event      string `json:"event"`
 	Actor      string `json:"actor"`
@@ -145,6 +146,7 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 							Status:     run.GetStatus(),
 							Conclusion: run.GetConclusion(),
 							CreatedAt:  run.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
+							UpdatedAt:  run.GetUpdatedAt().Format("2006-01-02T15:04:05Z"),
 							HeadBranch: run.GetHeadBranch(),
 							Event:      run.GetEvent(),
 							Actor:      actor,

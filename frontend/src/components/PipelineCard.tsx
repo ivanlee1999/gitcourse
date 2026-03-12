@@ -40,7 +40,7 @@ export default function PipelineCard({ workflow, owner, repo }: PipelineCardProp
             <span>&middot;</span>
             <span>{run.event}</span>
           </div>
-          <div className="text-xs text-gray-500">{relativeTime(run.updated_at)}</div>
+          <div className="text-xs text-gray-500">{relativeTime(run.created_at)}</div>
         </div>
       ) : (
         <p className="text-xs text-gray-500">No runs</p>
