@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"sort"
 	"sync"
+	"time"
 
 	ghclient "github.com/ivanlee1999/gitcourse/backend/github"
 )
@@ -191,6 +193,24 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wg.Wait()
+
+	// Sort repos by most recent build time (repos with no runs go to bottom)
+	sort.Slice(results, func(i, j int) bool {
+		latestTime := func(r DashboardRepo) time.Time {
+			var t time.Time
+			for _, wf := range r.Workflows {
+				if wf.LatestRun != nil {
+					parsed, err := time.Parse("2006-01-02T15:04:05Z", wf.LatestRun.UpdatedAt)
+					if err == nil && parsed.After(t) {
+						t = parsed
+					}
+				}
+			}
+			return t
+		}
+		return latestTime(results[i]).After(latestTime(results[j]))
+	})
+
 	writeJSON(w, http.StatusOK, results)
 }
 
