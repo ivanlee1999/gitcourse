@@ -16,13 +16,9 @@ export default function Dashboard() {
     return <p className="text-gray-500">No repositories configured.</p>
   }
 
-  const sorted = [...data].sort((a, b) =>
-    `${a.owner}/${a.repo}`.localeCompare(`${b.owner}/${b.repo}`)
-  )
-
   return (
     <div>
-      {sorted.map((rw) => (
+      {data.map((rw) => (
         <RepoSection key={`${rw.owner}/${rw.repo}`} repoWorkflows={rw} />
       ))}
     </div>
