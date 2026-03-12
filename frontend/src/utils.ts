@@ -1,6 +1,8 @@
-export function relativeTime(dateStr: string): string {
-  const now = Date.now()
+export function relativeTime(dateStr: string | null | undefined): string {
+  if (!dateStr) return 'unknown'
   const then = new Date(dateStr).getTime()
+  if (isNaN(then)) return 'unknown'
+  const now = Date.now()
   const diffMs = now - then
   const diffSec = Math.floor(diffMs / 1000)
   const diffMin = Math.floor(diffSec / 60)
@@ -13,9 +15,11 @@ export function relativeTime(dateStr: string): string {
   return `${diffDay} day${diffDay !== 1 ? 's' : ''} ago`
 }
 
-export function duration(startStr: string, endStr: string): string {
+export function duration(startStr: string | null | undefined, endStr: string | null | undefined): string {
+  if (!startStr || !endStr) return '—'
   const start = new Date(startStr).getTime()
   const end = new Date(endStr).getTime()
+  if (isNaN(start) || isNaN(end)) return '—'
   const diffMs = end - start
   const diffSec = Math.floor(diffMs / 1000)
   const min = Math.floor(diffSec / 60)
