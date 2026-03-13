@@ -19,8 +19,13 @@ import (
 	ghclient "github.com/ivanlee1999/gitcourse/backend/github"
 )
 
+type sseEvent struct {
+	eventType string
+	payload   []byte
+}
+
 type sseClient struct {
-	ch chan []byte
+	ch chan sseEvent
 }
 
 type Server struct {
@@ -555,6 +560,16 @@ func (s *Server) updateRateLimit() {
 
 // broadcastSSE sends dashboard data to all connected SSE clients.
 func (s *Server) broadcastSSE(data []DashboardRepo) {
+	s.broadcastEvent("dashboard", data)
+}
+
+// broadcastWorkflowRuns sends workflow run updates for a specific repo.
+func (s *Server) broadcastWorkflowRuns(owner, repo string, runs []SlimWorkflowRun) {
+	s.broadcastEvent(fmt.Sprintf("workflow_runs:%s/%s", owner, repo), runs)
+}
+
+// broadcastEvent sends a typed SSE event to all connected clients.
+func (s *Server) broadcastEvent(eventType string, data interface{}) {
 	payload, err := json.Marshal(data)
 	if err != nil {
 		log.Printf("SSE marshal error: %v", err)
@@ -565,7 +580,7 @@ func (s *Server) broadcastSSE(data []DashboardRepo) {
 	defer s.sseMu.Unlock()
 	for client := range s.sseClients {
 		select {
-		case client.ch <- payload:
+		case client.ch <- sseEvent{eventType: eventType, payload: payload}:
 		default:
 			// Client too slow, skip this event
 		}
@@ -594,7 +609,7 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	client := &sseClient{ch: make(chan []byte, 16)}
+	client := &sseClient{ch: make(chan sseEvent, 16)}
 
 	s.sseMu.Lock()
 	s.sseClients[client] = struct{}{}
@@ -611,8 +626,8 @@ func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case payload := <-client.ch:
-			fmt.Fprintf(w, "event: dashboard\ndata: %s\n\n", payload)
+		case ev := <-client.ch:
+			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", ev.eventType, ev.payload)
 			flusher.Flush()
 		}
 	}
@@ -814,6 +829,10 @@ func (s *Server) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		s.dashboardMu.Unlock()
 
 		s.broadcastSSE(data)
+
+		// Also broadcast workflow-level detail for any open detail pages
+		s.refreshAndBroadcastWorkflowRuns(owner, repoName)
+
 		log.Printf("Webhook: updated dashboard for %s/%s (%s)", owner, repoName, eventType)
 	}()
 
@@ -833,6 +852,71 @@ func verifySignature(payload []byte, signature, secret string) bool {
 	mac.Write(payload)
 	expected := mac.Sum(nil)
 	return hmac.Equal(sig, expected)
+}
+
+// refreshAndBroadcastWorkflowRuns fetches runs for each workflow in a repo and broadcasts via SSE.
+func (s *Server) refreshAndBroadcastWorkflowRuns(owner, repoName string) {
+	ctx := context.Background()
+	workflows, err := s.githubClient.GetWorkflows(ctx, owner, repoName)
+	if err != nil {
+		log.Printf("Webhook: failed to get workflows for %s/%s: %v", owner, repoName, err)
+		return
+	}
+
+	for _, wf := range workflows.Workflows {
+		runs, err := s.githubClient.GetWorkflowRuns(ctx, owner, repoName, wf.GetID())
+		if err != nil {
+			continue
+		}
+
+		slim := make([]SlimWorkflowRun, 0, len(runs))
+		for _, run := range runs {
+			sr := SlimWorkflowRun{
+				ID:           run.GetID(),
+				Name:         run.GetName(),
+				Status:       run.GetStatus(),
+				Conclusion:   run.GetConclusion(),
+				CreatedAt:    run.GetCreatedAt().Format("2006-01-02T15:04:05Z"),
+				UpdatedAt:    run.GetUpdatedAt().Format("2006-01-02T15:04:05Z"),
+				HeadBranch:   run.GetHeadBranch(),
+				HeadSHA:      run.GetHeadSHA(),
+				Event:        run.GetEvent(),
+				RunNumber:    run.GetRunNumber(),
+				Actor:        run.GetActor().GetLogin(),
+				DisplayTitle: run.GetDisplayTitle(),
+			}
+
+			if run.GetStatus() == "in_progress" || run.GetStatus() == "queued" {
+				jobs, err := s.githubClient.GetJobsForRun(ctx, owner, repoName, run.GetID())
+				if err == nil {
+					for _, job := range jobs {
+						currentStep := ""
+						for _, step := range job.Steps {
+							if step.GetStatus() == "in_progress" {
+								currentStep = step.GetName()
+								break
+							}
+						}
+						sr.Jobs = append(sr.Jobs, SlimJob{
+							ID:          job.GetID(),
+							Name:        job.GetName(),
+							Status:      job.GetStatus(),
+							Conclusion:  job.GetConclusion(),
+							RunnerName:  job.GetRunnerName(),
+							StartedAt:   job.GetStartedAt().Format("2006-01-02T15:04:05Z"),
+							CurrentStep: currentStep,
+						})
+					}
+				}
+			}
+
+			slim = append(slim, sr)
+		}
+
+		wfIDStr := fmt.Sprintf("%d", wf.GetID())
+		s.broadcastWorkflowRuns(owner, repoName, slim)
+		_ = wfIDStr // workflow ID available if we want per-workflow events later
+	}
 }
 
 // handleRateLimit returns current GitHub API rate limit info.

@@ -1,5 +1,5 @@
 import { Link, useParams } from 'react-router-dom'
-import { useWorkflowRuns } from '../hooks/useApi'
+import { useWorkflowRuns, useWorkflowRunsSSE } from '../hooks/useApi'
 import RunRow from '../components/RunRow'
 
 export default function WorkflowDetail() {
@@ -10,6 +10,9 @@ export default function WorkflowDetail() {
   }>()
 
   const { data: runs, isLoading, error } = useWorkflowRuns(owner!, repo!, workflowId!)
+
+  // Subscribe to real-time updates via SSE
+  useWorkflowRunsSSE(owner!, repo!, workflowId!)
 
   return (
     <div>

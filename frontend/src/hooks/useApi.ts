@@ -25,8 +25,10 @@ export function useSSE() {
       }
     })
 
+    // Listen for all messages to catch workflow_runs:owner/repo events
+    es.onmessage = () => {} // no-op for unnamed events
+    
     es.onerror = () => {
-      // EventSource auto-reconnects. On reconnect, invalidate to get fresh data.
       if (es.readyState === EventSource.CONNECTING) {
         queryClient.invalidateQueries({ queryKey: ['dashboard'] })
       }
@@ -34,6 +36,38 @@ export function useSSE() {
 
     return () => es.close()
   }, [queryClient])
+}
+
+export function useWorkflowRunsSSE(owner: string, repo: string, workflowId: string) {
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    const es = new EventSource('/api/events')
+    const eventName = `workflow_runs:${owner}/${repo}`
+
+    // Dynamic event listener for repo-specific workflow run updates
+    const handler = (e: MessageEvent) => {
+      try {
+        const data: WorkflowRun[] = JSON.parse(e.data)
+        queryClient.setQueryData(['workflowRuns', owner, repo, workflowId], data)
+      } catch {
+        // ignore parse errors
+      }
+    }
+
+    es.addEventListener(eventName, handler)
+
+    es.onerror = () => {
+      if (es.readyState === EventSource.CONNECTING) {
+        queryClient.invalidateQueries({ queryKey: ['workflowRuns', owner, repo, workflowId] })
+      }
+    }
+
+    return () => {
+      es.removeEventListener(eventName, handler)
+      es.close()
+    }
+  }, [queryClient, owner, repo, workflowId])
 }
 
 export function useDashboard() {
