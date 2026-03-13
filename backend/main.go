@@ -20,8 +20,10 @@ func main() {
 		log.Fatal("GITHUB_ORG environment variable is required")
 	}
 
+	webhookSecret := os.Getenv("GITHUB_WEBHOOK_SECRET")
+
 	client := ghclient.NewClient(token)
-	server := api.NewServer(client, org)
+	server := api.NewServer(client, org, webhookSecret)
 
 	// Pre-populate dashboard cache before accepting requests
 	server.InitDashboardCache()

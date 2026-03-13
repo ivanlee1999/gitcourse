@@ -40,7 +40,21 @@ export function useDashboard() {
   return useQuery<RepoWorkflows[]>({
     queryKey: ['dashboard'],
     queryFn: () => fetchJson<RepoWorkflows[]>('/api/dashboard'),
-    refetchInterval: 30000,
+    refetchInterval: 60000,
+  })
+}
+
+export interface RateLimitInfo {
+  limit: number
+  remaining: number
+  reset: string
+}
+
+export function useRateLimit() {
+  return useQuery<RateLimitInfo>({
+    queryKey: ['rateLimit'],
+    queryFn: () => fetchJson<RateLimitInfo>('/api/rate-limit'),
+    refetchInterval: 60000,
   })
 }
 

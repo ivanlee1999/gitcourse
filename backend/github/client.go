@@ -10,7 +10,7 @@ import (
 	"golang.org/x/oauth2"
 )
 
-const cacheTTL = 30 * time.Second
+const cacheTTL = 60 * time.Second
 
 type Client struct {
 	gh    *gh.Client
@@ -30,6 +30,27 @@ func NewClient(token string) *Client {
 	}
 }
 
+// RateLimitInfo holds rate limit details.
+type RateLimitInfo struct {
+	Limit     int       `json:"limit"`
+	Remaining int       `json:"remaining"`
+	Reset     time.Time `json:"reset"`
+}
+
+// GetRateLimit returns current rate limit status (free, doesn't count against limit).
+func (c *Client) GetRateLimit(ctx context.Context) (*RateLimitInfo, error) {
+	limits, _, err := c.gh.RateLimit.Get(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("getting rate limit: %w", err)
+	}
+	core := limits.Core
+	return &RateLimitInfo{
+		Limit:     core.Limit,
+		Remaining: core.Remaining,
+		Reset:     core.Reset.Time,
+	}, nil
+}
+
 func (c *Client) GetOrgRepos(ctx context.Context, org string) ([]*gh.Repository, error) {
 	cacheKey := fmt.Sprintf("repos:%s", org)
 	if data, ok := c.cache.Get(cacheKey); ok {
@@ -38,7 +59,7 @@ func (c *Client) GetOrgRepos(ctx context.Context, org string) ([]*gh.Repository,
 
 	var allRepos []*gh.Repository
 	opts := &gh.RepositoryListByOrgOptions{
-		Type: "all",
+		Type:        "all",
 		ListOptions: gh.ListOptions{PerPage: 100},
 	}
 
@@ -108,7 +129,7 @@ func (c *Client) GetLatestWorkflowRuns(ctx context.Context, owner, repo string) 
 	}
 
 	opts := &gh.ListWorkflowRunsOptions{
-		ListOptions: gh.ListOptions{PerPage: 100},
+		ListOptions: gh.ListOptions{PerPage: 5},
 	}
 	runs, _, err := c.gh.Actions.ListRepositoryWorkflowRuns(ctx, owner, repo, opts)
 	if err != nil {
@@ -132,4 +153,10 @@ func (c *Client) GetJobsForRun(ctx context.Context, owner, repo string, runID in
 
 	c.cache.Set(cacheKey, jobs.Jobs, cacheTTL)
 	return jobs.Jobs, nil
+}
+
+// InvalidateRepo removes cached data for a specific repo so the next fetch is fresh.
+func (c *Client) InvalidateRepo(owner, repo string) {
+	c.cache.Delete(fmt.Sprintf("workflows:%s/%s", owner, repo))
+	c.cache.Delete(fmt.Sprintf("latest-runs:%s/%s", owner, repo))
 }

@@ -44,3 +44,9 @@ func (c *Cache) Set(key string, data interface{}, ttl time.Duration) {
 		expiry: time.Now().Add(ttl),
 	}
 }
+
+func (c *Cache) Delete(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.entries, key)
+}
