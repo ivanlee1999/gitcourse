@@ -1,32 +1,47 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"strconv"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
 	ghclient "github.com/ivanlee1999/gitcourse/backend/github"
 )
 
+type sseClient struct {
+	ch chan []byte
+}
+
 type Server struct {
 	githubClient *ghclient.Client
 	org          string
+
+	// Background dashboard cache
+	dashboardMu    sync.RWMutex
+	dashboardCache []DashboardRepo
+
+	// SSE clients
+	sseMu      sync.Mutex
+	sseClients map[*sseClient]struct{}
 }
 
 func NewServer(ghClient *ghclient.Client, org string) *Server {
 	return &Server{
 		githubClient: ghClient,
 		org:          org,
+		sseClients:   make(map[*sseClient]struct{}),
 	}
 }
 
 func (s *Server) RegisterRoutes(mux *http.ServeMux) {
 	mux.Handle("GET /api/dashboard", corsMiddleware(http.HandlerFunc(s.handleDashboard)))
+	mux.Handle("GET /api/events", corsMiddleware(http.HandlerFunc(s.handleSSE)))
 	mux.Handle("GET /api/repos/{owner}/{repo}/workflows", corsMiddleware(http.HandlerFunc(s.handleWorkflows)))
 	mux.Handle("GET /api/repos/{owner}/{repo}/workflows/{workflow_id}/runs", corsMiddleware(http.HandlerFunc(s.handleWorkflowRuns)))
 	mux.Handle("GET /api/runs/{owner}/{repo}/{run_id}/jobs", corsMiddleware(http.HandlerFunc(s.handleJobs)))
@@ -119,13 +134,13 @@ type SlimWorkflowRun struct {
 	Jobs         []SlimJob  `json:"jobs,omitempty"`
 }
 
-func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+// fetchDashboard fetches fresh dashboard data from GitHub.
+func (s *Server) fetchDashboard() ([]DashboardRepo, error) {
+	ctx := context.Background()
 
 	repos, err := s.githubClient.GetOrgRepos(ctx, s.org)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to get repos: %v", err))
-		return
+		return nil, fmt.Errorf("failed to get repos: %w", err)
 	}
 
 	results := make([]DashboardRepo, len(repos))
@@ -248,7 +263,139 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return latestTime(results[i]).After(latestTime(results[j]))
 	})
 
-	writeJSON(w, http.StatusOK, results)
+	return results, nil
+}
+
+// dashboardChanged compares old and new dashboard data for status/conclusion changes.
+func dashboardChanged(old, new []DashboardRepo) bool {
+	if len(old) != len(new) {
+		return true
+	}
+	oldRuns := make(map[int64][2]string) // run ID -> [status, conclusion]
+	for _, repo := range old {
+		for _, wf := range repo.Workflows {
+			if wf.LatestRun != nil {
+				oldRuns[wf.LatestRun.ID] = [2]string{wf.LatestRun.Status, wf.LatestRun.Conclusion}
+			}
+		}
+	}
+	for _, repo := range new {
+		for _, wf := range repo.Workflows {
+			if wf.LatestRun != nil {
+				prev, exists := oldRuns[wf.LatestRun.ID]
+				if !exists || prev[0] != wf.LatestRun.Status || prev[1] != wf.LatestRun.Conclusion {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// InitDashboardCache pre-populates the dashboard cache. Call before starting the server.
+func (s *Server) InitDashboardCache() {
+	log.Println("Pre-populating dashboard cache...")
+	data, err := s.fetchDashboard()
+	if err != nil {
+		log.Printf("Warning: initial dashboard fetch failed: %v", err)
+		return
+	}
+	s.dashboardMu.Lock()
+	s.dashboardCache = data
+	s.dashboardMu.Unlock()
+	log.Printf("Dashboard cache populated with %d repos", len(data))
+}
+
+// StartBackgroundRefresh starts a goroutine that refreshes the dashboard cache every 30s.
+func (s *Server) StartBackgroundRefresh() {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for range ticker.C {
+			data, err := s.fetchDashboard()
+			if err != nil {
+				log.Printf("Background refresh failed: %v", err)
+				continue
+			}
+
+			s.dashboardMu.RLock()
+			changed := dashboardChanged(s.dashboardCache, data)
+			s.dashboardMu.RUnlock()
+
+			s.dashboardMu.Lock()
+			s.dashboardCache = data
+			s.dashboardMu.Unlock()
+
+			if changed {
+				s.broadcastSSE(data)
+			}
+		}
+	}()
+}
+
+// broadcastSSE sends dashboard data to all connected SSE clients.
+func (s *Server) broadcastSSE(data []DashboardRepo) {
+	payload, err := json.Marshal(data)
+	if err != nil {
+		log.Printf("SSE marshal error: %v", err)
+		return
+	}
+
+	s.sseMu.Lock()
+	defer s.sseMu.Unlock()
+	for client := range s.sseClients {
+		select {
+		case client.ch <- payload:
+		default:
+			// Client too slow, skip this event
+		}
+	}
+}
+
+func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	s.dashboardMu.RLock()
+	data := s.dashboardCache
+	s.dashboardMu.RUnlock()
+
+	if data == nil {
+		data = []DashboardRepo{}
+	}
+	writeJSON(w, http.StatusOK, data)
+}
+
+func (s *Server) handleSSE(w http.ResponseWriter, r *http.Request) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	client := &sseClient{ch: make(chan []byte, 16)}
+
+	s.sseMu.Lock()
+	s.sseClients[client] = struct{}{}
+	s.sseMu.Unlock()
+
+	defer func() {
+		s.sseMu.Lock()
+		delete(s.sseClients, client)
+		s.sseMu.Unlock()
+	}()
+
+	ctx := r.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case payload := <-client.ch:
+			fmt.Fprintf(w, "event: dashboard\ndata: %s\n\n", payload)
+			flusher.Flush()
+		}
+	}
 }
 
 func (s *Server) handleWorkflows(w http.ResponseWriter, r *http.Request) {

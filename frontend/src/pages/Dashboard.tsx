@@ -1,8 +1,9 @@
-import { useDashboard } from '../hooks/useApi'
+import { useDashboard, useSSE } from '../hooks/useApi'
 import RepoSection from '../components/RepoSection'
 import ActiveBuilds from '../components/ActiveBuilds'
 
 export default function Dashboard() {
+  useSSE()
   const { data, isLoading, error } = useDashboard()
 
   if (isLoading) {

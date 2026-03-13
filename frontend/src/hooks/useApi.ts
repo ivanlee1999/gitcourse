@@ -1,4 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
+import { useEffect } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { RepoWorkflows, WorkflowRun, WorkflowJob } from '../types'
 
 async function fetchJson<T>(url: string): Promise<T> {
@@ -7,6 +8,32 @@ async function fetchJson<T>(url: string): Promise<T> {
     throw new Error(`HTTP ${res.status}: ${res.statusText}`)
   }
   return res.json()
+}
+
+export function useSSE() {
+  const queryClient = useQueryClient()
+
+  useEffect(() => {
+    const es = new EventSource('/api/events')
+
+    es.addEventListener('dashboard', (e: MessageEvent) => {
+      try {
+        const data: RepoWorkflows[] = JSON.parse(e.data)
+        queryClient.setQueryData(['dashboard'], data)
+      } catch {
+        // ignore parse errors
+      }
+    })
+
+    es.onerror = () => {
+      // EventSource auto-reconnects. On reconnect, invalidate to get fresh data.
+      if (es.readyState === EventSource.CONNECTING) {
+        queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+      }
+    }
+
+    return () => es.close()
+  }, [queryClient])
 }
 
 export function useDashboard() {

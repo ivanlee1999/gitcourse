@@ -23,6 +23,10 @@ func main() {
 	client := ghclient.NewClient(token)
 	server := api.NewServer(client, org)
 
+	// Pre-populate dashboard cache before accepting requests
+	server.InitDashboardCache()
+	server.StartBackgroundRefresh()
+
 	mux := http.NewServeMux()
 	server.RegisterRoutes(mux)
 
