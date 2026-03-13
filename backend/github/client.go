@@ -38,6 +38,7 @@ func (c *Client) GetOrgRepos(ctx context.Context, org string) ([]*gh.Repository,
 
 	var allRepos []*gh.Repository
 	opts := &gh.RepositoryListByOrgOptions{
+		Type: "all",
 		ListOptions: gh.ListOptions{PerPage: 100},
 	}
 
